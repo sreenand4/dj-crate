@@ -5,6 +5,7 @@
   "main": "dist/app.js",
   "scripts": {
     "dev": "tsx src/app.ts",
+    "compile": "tsc",
     "build": "tsc",
     "start": "node dist/app.js"
   },
