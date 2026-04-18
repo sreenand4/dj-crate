@@ -6,3 +6,5 @@ dist/
 !tsconfig.json
 .claude/
 yt-dlp
+dj-crate-backend-9925caeccec0.json
+cookies.txt
