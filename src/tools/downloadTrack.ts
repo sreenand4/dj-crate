@@ -7,6 +7,7 @@ const TIMEOUT_MS = 120_000;
 
 const HOME = process.env.HOME ?? '';
 const YTDLP = process.env.YTDLP_PATH || 'yt-dlp';
+const COOKIES = process.env.YTDLP_COOKIES || '';
 const EXEC_ENV = {
   ...process.env,
   PATH: [
@@ -81,6 +82,7 @@ async function ytdlpDownload(
     '--audio-format mp3',
     '--audio-quality 320K',
     '--no-playlist',
+    ...(platform === 'youtube' && COOKIES ? [`--cookies "${COOKIES}"`] : []),
     `--output "${outputTemplate}"`,
     `"${url}"`,
   ].join(' ');
