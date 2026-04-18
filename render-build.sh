@@ -1,13 +1,17 @@
 #!/bin/bash
 set -e
 
-# Install yt-dlp
-curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
-chmod a+rx /usr/local/bin/yt-dlp
+# Install yt-dlp to local bin (writable)
+mkdir -p $HOME/.local/bin
+curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o $HOME/.local/bin/yt-dlp
+chmod a+rx $HOME/.local/bin/yt-dlp
 
-# Install ffmpeg (required for audio conversion)
-apt-get install -y ffmpeg
+# Add to PATH
+export PATH="$HOME/.local/bin:$PATH"
 
-# Install node dependencies and build
+# Install ffmpeg
+apt-get install -y ffmpeg 2>/dev/null || echo "ffmpeg install skipped"
+
+# Install node dependencies
 npm install
 npm run compile

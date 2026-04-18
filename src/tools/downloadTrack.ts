@@ -6,6 +6,7 @@ const BASE_DIR = '/tmp/crate_downloads';
 const TIMEOUT_MS = 120_000;
 
 const HOME = process.env.HOME ?? '';
+const YTDLP = process.env.YTDLP_PATH || 'yt-dlp';
 const EXEC_ENV = {
   ...process.env,
   PATH: [
@@ -75,7 +76,7 @@ async function ytdlpDownload(
   const expectedPath = path.join(BASE_DIR, `${filename}.mp3`);
 
   const cmd = [
-    'yt-dlp',
+    YTDLP,
     '--extract-audio',
     '--audio-format mp3',
     '--audio-quality 320K',
