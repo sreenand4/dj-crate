@@ -45,7 +45,7 @@ export const tools: Anthropic.Messages.Tool[] = [
   {
     name: 'downloadTrack',
     description:
-      'Download a track from a given URL as an MP3 to a local temp path. Returns the local file path on success. Must be called before stageFile.',
+      'Download a track from a given URL as an MP3. Returns a gcsKey (GCS object key in the temp/ prefix) on success. Pass that gcsKey to stageFile. Must be called before stageFile.',
     input_schema: {
       type: 'object',
       properties: {
@@ -73,13 +73,13 @@ export const tools: Anthropic.Messages.Tool[] = [
   {
     name: 'stageFile',
     description:
-      'Upload a downloaded MP3 to the cloud library and record it in the staging manifest. Always call getFolders first to pick the right folder.',
+      'Move a downloaded MP3 from the temp staging area into the organized library folder and record it in the manifest. Always call getFolders first to pick the right folder.',
     input_schema: {
       type: 'object',
       properties: {
-        localPath: {
+        gcsKey: {
           type: 'string',
-          description: 'Absolute local path to the MP3 file (returned by downloadTrack)',
+          description: 'GCS object key returned by downloadTrack, e.g. "temp/Artist-Song.mp3"',
         },
         folder: {
           type: 'string',
@@ -103,7 +103,7 @@ export const tools: Anthropic.Messages.Tool[] = [
           description: 'Original URL the track was downloaded from',
         },
       },
-      required: ['localPath', 'folder', 'songName', 'artist', 'source', 'sourceUrl'],
+      required: ['gcsKey', 'folder', 'songName', 'artist', 'source', 'sourceUrl'],
     },
   },
   {

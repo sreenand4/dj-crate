@@ -1,10 +1,9 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import { getBucket } from '../lib/gcs';
 import { addStagedSong } from '../lib/firestore';
 
 interface StageFileInput {
-  localPath: string;
+  gcsKey: string;
   folder: string;
   songName: string;
   artist: string;
@@ -25,53 +24,44 @@ interface StageFileError {
 export async function stageFile(
   input: StageFileInput
 ): Promise<StageFileResult | StageFileError> {
-  const { localPath, folder, songName, artist, source, sourceUrl } = input;
+  const { gcsKey, folder, songName, artist, source, sourceUrl } = input;
 
-  console.log(`[stageFile] Staging "${path.basename(localPath)}" → ${folder}/`);
+  const filename = path.basename(gcsKey);
+  const destKey = `${folder}/${filename}`;
 
-  if (!fs.existsSync(localPath)) {
-    console.error(`[stageFile] Local file not found: ${localPath}`);
-    return { error: `File not found at path: ${localPath}` };
-  }
-
-  const filename = path.basename(localPath);
-  const gcsKey = `${folder}/${filename}`;
+  console.log(`[stageFile] Moving gs://dj-crate-stash/${gcsKey} → ${destKey}`);
 
   try {
     const bucket = getBucket();
-    console.log(`[stageFile] Uploading to GCS: gs://dj-crate-stash/${gcsKey}`);
+    const srcFile = bucket.file(gcsKey);
+    const destFile = bucket.file(destKey);
 
-    await bucket.upload(localPath, {
-      destination: gcsKey,
-      metadata: { contentType: 'audio/mpeg' },
-    });
+    // GCS server-side copy — no data travels through this process
+    await srcFile.copy(destFile, { metadata: { contentType: 'audio/mpeg' } });
+    console.log(`[stageFile] ✓ Copied to gs://dj-crate-stash/${destKey}`);
 
-    const stats = fs.statSync(localPath);
-    console.log(`[stageFile] ✓ Uploaded ${(stats.size / 1024 / 1024).toFixed(2)} MB to GCS`);
-
-    // Delete local temp file — fire and forget
-    fs.unlink(localPath, err => {
-      if (err) console.warn(`[stageFile] Could not delete temp file ${localPath}:`, err.message);
-      else console.log(`[stageFile] Cleaned up local temp file: ${localPath}`);
-    });
+    // Delete the temp object — fire and forget
+    srcFile.delete().catch((err: any) =>
+      console.warn(`[stageFile] Could not delete temp object ${gcsKey}:`, err.message)
+    );
 
     // Write to Firestore — fire and forget
     addStagedSong({
       songName,
       artist,
       filename,
-      gcsKey,
+      gcsKey: destKey,
       folder,
       source: source as 'youtube' | 'soundcloud',
       sourceUrl,
       downloadedAt: new Date().toISOString(),
-    }).catch(e => console.error('[stageFile] Firestore write failed:', e.message));
+    }).catch((e: any) => console.error('[stageFile] Firestore write failed:', e.message));
 
     console.log(`[stageFile] ✓ "${songName}" staged in ${folder}/`);
-    return { gcsKey, folder, filename };
+    return { gcsKey: destKey, folder, filename };
 
   } catch (err: any) {
-    console.error('[stageFile] GCS upload failed:', err.message);
-    return { error: `Upload failed: ${err.message}` };
+    console.error('[stageFile] GCS copy failed:', err.message);
+    return { error: `Stage failed: ${err.message}` };
   }
 }

@@ -125,16 +125,21 @@ export async function dumpLibrary(): Promise<DumpResult | DumpError> {
     return { error: `Failed to upload zip: ${err.message}` };
   }
 
-  // Generate signed download URL (1 hour)
+  // Generate signed download URL.
+  // Use the GCS V4 maximum of 7 days (604800 s) so the link survives any
+  // realistic server clock drift and gives the user a full week to download.
+  // A 1-hour TTL was previously used, which caused "expired" errors on click
+  // whenever the host clock lagged behind real time by even a few minutes.
+  const SIGNED_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 604800 s — GCS V4 max
   let downloadUrl: string;
   try {
     const [url] = await bucket.file(zipKey).getSignedUrl({
       version: 'v4',
       action: 'read',
-      expires: Date.now() + 60 * 60 * 1000,
+      expires: new Date(Date.now() + SIGNED_URL_TTL_MS),
     });
     downloadUrl = url;
-    console.log('[dumpLibrary] Signed URL generated (expires in 1hr)');
+    console.log('[dumpLibrary] Signed URL generated (expires in 7 days)');
   } catch (err: any) {
     console.error('[dumpLibrary] Failed to generate signed URL:', err.message);
     cleanup(DUMP_DIR, DUMP_ZIP);
