@@ -6,19 +6,70 @@ import { SYSTEM_PROMPT } from './config/prompts';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const STATUS_MESSAGES: Record<string, string> = {
-  searchYouTube: '⚙️ Scraping YouTube...',
-  searchSoundCloud: '⚙️ Scraping SoundCloud...',
-  downloadTrack: '⇩ Downloading track...',
-  stageFile: 'Saving to your library...',
-  getFolders: 'Checking folders...',
-  createFolder: 'Creating new folder...',
-  dumpLibrary: '🎁 Packing your crate...',
-};
+// ── Status helpers ────────────────────────────────────────────────────────────
 
-function statusFor(toolName: string): string {
-  return STATUS_MESSAGES[toolName] ?? `⚙️ Running ${toolName}...`;
+function statusBefore(name: string, input: any): string {
+  switch (name) {
+    case 'searchSoundCloud':
+      return `Searching SoundCloud for *${input.query}*...`;
+    case 'searchYouTube':
+      return `Searching YouTube for *${input.query}*...`;
+    case 'downloadTrack': {
+      const src = input.source === 'youtube' ? 'YouTube' : 'SoundCloud';
+      return `Downloading *${input.artist} — ${input.songName}* from ${src}...`;
+    }
+    case 'stageFile':
+      return `Filing *${input.songName}* into your library...`;
+    case 'getFolders':
+      return `Checking your folders...`;
+    case 'createFolder':
+      return `Creating folder *${input.folderName}*...`;
+    case 'dumpLibrary':
+      return `Packing your crate...`;
+    default:
+      return `Running ${name}...`;
+  }
 }
+
+function statusAfter(name: string, input: any, result: any): string | null {
+  switch (name) {
+    case 'searchSoundCloud': {
+      if (!Array.isArray(result) || result.length === 0) {
+        return `Nothing on SoundCloud — trying YouTube...`;
+      }
+      const top = result[0];
+      return `Found *<${top.url}|${top.title}>* by ${top.user} on SoundCloud`;
+    }
+    case 'searchYouTube': {
+      if (!Array.isArray(result) || result.length === 0) {
+        return `No YouTube results found.`;
+      }
+      const top = result[0];
+      return `Found *<${top.url}|${top.title}>* by ${top.channelTitle} on YouTube`;
+    }
+    case 'downloadTrack': {
+      if (result?.error) {
+        return `Download failed — ${result.error}`;
+      }
+      const src = input.source === 'youtube' ? 'YouTube' : 'SoundCloud';
+      return `Downloaded *${input.artist} — ${input.songName}* from ${src} ✓`;
+    }
+    case 'stageFile': {
+      if (result?.error) {
+        return `Failed to save — ${result.error}`;
+      }
+      return `Saved *${input.songName}* to *${result.folder}/* ✓`;
+    }
+    case 'dumpLibrary': {
+      if (result?.error) return null;
+      return `Zipped ${result.songCount} track${result.songCount === 1 ? '' : 's'} across ${result.folders?.length ?? '?'} folder${result.folders?.length === 1 ? '' : 's'} — uploading...`;
+    }
+    default:
+      return null;
+  }
+}
+
+// ── Main agent loop ───────────────────────────────────────────────────────────
 
 export async function run(
   text: string,
@@ -30,8 +81,12 @@ export async function run(
   console.log(`\n[Agent] ━━━ New request from ${userId} ━━━`);
   console.log(`[Agent] Message: "${text}"`);
 
+  const slackUpdate = (msg: string) =>
+    client.chat.update({ channel, ts, text: msg }).catch((e: any) =>
+      console.warn(`[Agent] Slack update failed: ${e.message}`)
+    );
+
   try {
-    // ── Pre-LLM: load history ────────────────────────────────────────────────
     console.log('[Agent] Loading conversation history from Firestore...');
     const history = await getHistory(userId);
 
@@ -47,7 +102,6 @@ export async function run(
 
     console.log(`[Agent] History loaded (${history.length} entries). Entering Claude loop...`);
 
-    // ── Agentic loop ──────────────────────────────────────────────────────────
     let finalResponse = '';
     const MAX_ITERATIONS = 10;
 
@@ -66,7 +120,6 @@ export async function run(
 
       messages.push({ role: 'assistant', content: response.content });
 
-      // No tool use → final answer
       if (response.stop_reason !== 'tool_use') {
         finalResponse = response.content
           .filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text')
@@ -78,7 +131,6 @@ export async function run(
         break;
       }
 
-      // ── Process tool calls ─────────────────────────────────────────────────
       const toolUseBlocks = response.content.filter(
         (b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use'
       );
@@ -90,10 +142,8 @@ export async function run(
       for (const toolUse of toolUseBlocks) {
         console.log(`[Agent] → Calling "${toolUse.name}" with:`, JSON.stringify(toolUse.input).slice(0, 200));
 
-        // Update Slack status immediately — fire and forget
-        client.chat.update({ channel, ts, text: statusFor(toolUse.name) }).catch((e: any) =>
-          console.warn(`[Agent] Slack status update failed: ${e.message}`)
-        );
+        // Pre-tool status — say what we're about to do with specifics
+        slackUpdate(statusBefore(toolUse.name, toolUse.input));
 
         const handler = toolHandlers[toolUse.name];
         let result: unknown;
@@ -105,8 +155,11 @@ export async function run(
           result = await handler(toolUse.input);
         }
 
-        const resultPreview = JSON.stringify(result).slice(0, 300);
-        console.log(`[Agent] ← "${toolUse.name}" result: ${resultPreview}`);
+        console.log(`[Agent] ← "${toolUse.name}" result: ${JSON.stringify(result).slice(0, 300)}`);
+
+        // Post-tool status — show what we actually got back
+        const after = statusAfter(toolUse.name, toolUse.input, result);
+        if (after) slackUpdate(after);
 
         toolResults.push({
           type: 'tool_result',
@@ -123,11 +176,9 @@ export async function run(
       }
     }
 
-    // ── Respond to user immediately ───────────────────────────────────────────
     await client.chat.update({ channel, ts, text: finalResponse });
     console.log('[Agent] Slack message updated — user has their response');
 
-    // ── Post-LLM Firestore write — fire and forget ────────────────────────────
     appendToHistory(userId, `User said: ${text}`, `Agent: ${finalResponse}`)
       .then(() => console.log('[Agent] History persisted to Firestore'))
       .catch((e: any) => console.error('[Agent] Failed to persist history:', e.message));

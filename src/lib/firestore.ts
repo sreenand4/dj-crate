@@ -94,6 +94,8 @@ export async function appendToHistory(userId: string, ...entries: string[]): Pro
 
 // ─── Folders / Registry ──────────────────────────────────────────────────────
 
+const DEFAULT_FOLDERS = ['EDM', 'Pop', 'Hip-Hop', 'Indian', 'Manual_Review'];
+
 export async function getFolders(): Promise<string[]> {
   const db = getDb();
   const docRef = db.collection('registry').doc('main');
@@ -102,9 +104,8 @@ export async function getFolders(): Promise<string[]> {
 
   if (!snap.exists) {
     console.log('[Firestore] Registry doc missing — creating with defaults');
-    const defaults = ['Manual_Review'];
-    await docRef.set({ folders: defaults });
-    return defaults;
+    await docRef.set({ folders: DEFAULT_FOLDERS });
+    return DEFAULT_FOLDERS;
   }
 
   const folders = snap.data()!.folders as string[];
@@ -117,7 +118,7 @@ export async function addFolder(folderName: string): Promise<void> {
   const docRef = db.collection('registry').doc('main');
   const snap = await docRef.get();
 
-  const folders: string[] = snap.exists ? (snap.data()!.folders as string[]) : ['Manual_Review'];
+  const folders: string[] = snap.exists ? (snap.data()!.folders as string[]) : [...DEFAULT_FOLDERS];
 
   if (folders.includes(folderName)) {
     console.log(`[Firestore] Folder "${folderName}" already exists`);
@@ -131,7 +132,7 @@ export async function addFolder(folderName: string): Promise<void> {
 
 export async function resetRegistry(): Promise<void> {
   const db = getDb();
-  await db.collection('registry').doc('main').set({ folders: ['Manual_Review'] });
+  await db.collection('registry').doc('main').set({ folders: DEFAULT_FOLDERS });
   console.log('[Firestore] Registry reset to defaults');
 }
 

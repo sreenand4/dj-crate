@@ -98,6 +98,22 @@ export async function dumpLibrary(): Promise<DumpResult | DumpError> {
     console.warn(`[dumpLibrary] ${downloadErrors.length} files failed to download — continuing with the rest`);
   }
 
+  // Log total size of downloaded files
+  let totalBytes = 0;
+  try {
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else totalBytes += fs.statSync(full).size;
+      }
+    };
+    walk(DUMP_DIR);
+    console.log(`[dumpLibrary] Total downloaded size: ${(totalBytes / 1024 / 1024).toFixed(2)} MB across ${songs.length - downloadErrors.length} files`);
+  } catch (e: any) {
+    console.warn('[dumpLibrary] Could not calculate total size:', e.message);
+  }
+
   // Zip the dump dir
   console.log('[dumpLibrary] Zipping...');
   try {
@@ -108,38 +124,46 @@ export async function dumpLibrary(): Promise<DumpResult | DumpError> {
     return { error: `Failed to create zip: ${err.message}` };
   }
 
+  // Log zip file size before uploading
+  try {
+    const zipBytes = fs.statSync(DUMP_ZIP).size;
+    console.log(`[dumpLibrary] Zip file size: ${(zipBytes / 1024 / 1024).toFixed(2)} MB`);
+  } catch (e: any) {
+    console.warn('[dumpLibrary] Could not stat zip file:', e.message);
+  }
+
   // Upload zip to GCS
   const timestamp = Date.now();
   const zipKey = `dumps/crate_dump_${timestamp}.zip`;
   const bucket = getBucket();
 
-  console.log(`[dumpLibrary] Uploading zip to gs://dj-crate-stash/${zipKey}`);
+  console.log(`[dumpLibrary] Zip created — starting GCS upload to gs://dj-crate-stash/${zipKey}`);
   try {
     await bucket.upload(DUMP_ZIP, {
       destination: zipKey,
       metadata: { contentType: 'application/zip' },
     });
+    console.log(`[dumpLibrary] GCS upload complete — gs://dj-crate-stash/${zipKey}`);
   } catch (err: any) {
     console.error('[dumpLibrary] Zip upload failed:', err.message);
     cleanup(DUMP_DIR, DUMP_ZIP);
     return { error: `Failed to upload zip: ${err.message}` };
   }
 
-  // Generate signed download URL.
-  // Use the GCS V4 maximum of 7 days (604800 s) so the link survives any
-  // realistic server clock drift and gives the user a full week to download.
-  // A 1-hour TTL was previously used, which caused "expired" errors on click
-  // whenever the host clock lagged behind real time by even a few minutes.
-  const SIGNED_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 604800 s — GCS V4 max
+  // Generate a V4 signed URL valid for 24 hours.
+  // Log the computed expiry so we can verify clock sanity if issues recur.
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  console.log(`[dumpLibrary] Signing URL — now=${new Date().toISOString()} expires=${expiresAt.toISOString()}`);
+
   let downloadUrl: string;
   try {
     const [url] = await bucket.file(zipKey).getSignedUrl({
       version: 'v4',
       action: 'read',
-      expires: new Date(Date.now() + SIGNED_URL_TTL_MS),
+      expires: expiresAt,
     });
     downloadUrl = url;
-    console.log('[dumpLibrary] Signed URL generated (expires in 7 days)');
+    console.log(`[dumpLibrary] Signed URL generated (expires ${expiresAt.toISOString()})`);
   } catch (err: any) {
     console.error('[dumpLibrary] Failed to generate signed URL:', err.message);
     cleanup(DUMP_DIR, DUMP_ZIP);
