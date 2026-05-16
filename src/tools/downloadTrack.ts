@@ -54,7 +54,11 @@ export async function downloadTrack(
   try {
     body = await response.json();
   } catch {
-    return { error: `crate-dl returned non-JSON response (status ${response.status})` };
+    console.error(`[downloadTrack] crate-dl returned non-JSON (status ${response.status}) — service may be down`);
+    return {
+      error: `INFRASTRUCTURE ERROR: crate-dl (home download server) returned HTTP ${response.status} with a non-JSON body. This is NOT a problem with the song or source URL — the download service itself is down or misconfigured. Tell the user the download service is unavailable and to check pm2 status on the Dell.`,
+      retriable: false,
+    };
   }
 
   if (!response.ok) {
