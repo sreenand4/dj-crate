@@ -7,8 +7,13 @@ import { getAllStagedSongs, clearStagedSongs, resetRegistry } from '../lib/fires
 const DUMP_DIR = '/tmp/crate_dump';
 const DUMP_ZIP = '/tmp/crate_dump.zip';
 
+/** GCS V4 read URLs allow at most 7 days from signing time (same limit enforced by @google-cloud/storage). */
+const SIGNED_URL_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+
 interface DumpResult {
   downloadUrl: string;
+  /** ISO-8601 UTC — link stops working after this instant. */
+  downloadUrlExpiresAt: string;
   songCount: number;
   folders: string[];
 }
@@ -150,9 +155,9 @@ export async function dumpLibrary(): Promise<DumpResult | DumpError> {
     return { error: `Failed to upload zip: ${err.message}` };
   }
 
-  // Generate a V4 signed URL valid for 24 hours.
-  // Log the computed expiry so we can verify clock sanity if issues recur.
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  // GCS V4 signed URL — use max allowed lifetime so links stay valid if Slack/history replays
+  // or the user downloads later. (Still finite: never paste URLs from old tool results.)
+  const expiresAt = new Date(Date.now() + SIGNED_URL_MAX_MS);
   console.log(`[dumpLibrary] Signing URL — now=${new Date().toISOString()} expires=${expiresAt.toISOString()}`);
 
   let downloadUrl: string;
@@ -201,6 +206,7 @@ export async function dumpLibrary(): Promise<DumpResult | DumpError> {
   console.log(`[dumpLibrary] ✓ Done — ${songCount} songs across ${folderSet.size} folders`);
   return {
     downloadUrl,
+    downloadUrlExpiresAt: expiresAt.toISOString(),
     songCount,
     folders: [...folderSet],
   };

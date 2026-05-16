@@ -134,7 +134,7 @@ export const tools: Anthropic.Messages.Tool[] = [
   {
     name: 'dumpLibrary',
     description:
-      'Package all staged songs into a zip file and return a download URL. Wipes the staging area clean afterwards. Call this when the user says "dump" or any variation.',
+      'Package all staged songs into a zip file and return a time-limited signed download URL (downloadUrl; see downloadUrlExpiresAt). Wipes staging after. Call on every dump request — do not reuse URLs from older messages.',
     input_schema: {
       type: 'object',
       properties: {},

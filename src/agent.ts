@@ -25,7 +25,7 @@ function statusBefore(name: string, input: any): string {
     case 'createFolder':
       return `Creating folder *${input.folderName}*...`;
     case 'dumpLibrary':
-      return `Packing your crate...`;
+      return `Zipping up your library...`;
     default:
       return `Running ${name}...`;
   }
