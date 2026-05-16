@@ -195,6 +195,10 @@ export async function dumpLibrary(): Promise<DumpResult | DumpError> {
       version: 'v4',
       action: 'read',
       expires: expiresAt,
+      // Force browser download rather than inline preview; also prevents Slack's
+      // link-preview crawler from wrapping the URL through a redirect proxy, which
+      // would break the V4 signature's host-header check and return a 403.
+      responseDisposition: `attachment; filename="crate_dump.zip"`,
     });
     downloadUrl = url;
     console.log(`[dumpLibrary] Signed URL generated (expires ${expiresAt.toISOString()})`);
