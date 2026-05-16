@@ -22,25 +22,48 @@ interface DumpError {
   error: string;
 }
 
-async function downloadFromGCS(gcsKey: string, destPath: string): Promise<void> {
+async function downloadFromGCS(
+  gcsKey: string,
+  destPath: string,
+  label: string,
+): Promise<void> {
   const dir = path.dirname(destPath);
   fs.mkdirSync(dir, { recursive: true });
 
   const bucket = getBucket();
-  console.log(`[dumpLibrary] Downloading gs://dj-crate-stash/${gcsKey} → ${destPath}`);
+  const t0 = Date.now();
+  console.log(`[dumpLibrary] ${label} ▶ downloading gs://dj-crate-stash/${gcsKey}`);
   await bucket.file(gcsKey).download({ destination: destPath });
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+  let sizeStr = '?';
+  try {
+    const bytes = fs.statSync(destPath).size;
+    sizeStr = `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+  } catch { /* non-fatal */ }
+  console.log(`[dumpLibrary] ${label} ✓ done in ${elapsed}s (${sizeStr})`);
 }
 
 function zipDirectory(sourceDir: string, outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const output = fs.createWriteStream(outputPath);
     const archive = archiver.create('zip', { zlib: { level: 6 } });
+    let lastProgressLog = Date.now();
 
     output.on('close', () => {
-      console.log(`[dumpLibrary] Zip created: ${outputPath} (${(archive.pointer() / 1024 / 1024).toFixed(2)} MB)`);
+      console.log(`[dumpLibrary] Zip complete: ${(archive.pointer() / 1024 / 1024).toFixed(2)} MB`);
       resolve();
     });
     archive.on('error', reject);
+    archive.on('progress', ({ entries, fs: arcFs }) => {
+      const now = Date.now();
+      if (now - lastProgressLog >= 5000) {
+        lastProgressLog = now;
+        console.log(
+          `[dumpLibrary] Zipping... ${entries.processed}/${entries.total} files,` +
+          ` ${(arcFs.processedBytes / 1024 / 1024).toFixed(2)} MB processed`,
+        );
+      }
+    });
     archive.pipe(output);
     archive.directory(sourceDir, false);
     archive.finalize();
@@ -66,7 +89,8 @@ function cleanup(...paths: string[]): void {
 }
 
 export async function dumpLibrary(): Promise<DumpResult | DumpError> {
-  console.log('[dumpLibrary] Starting dump process...');
+  const dumpT0 = Date.now();
+  console.log('[dumpLibrary] ── Starting dump ──────────────────────────────');
 
   const songs = await getAllStagedSongs();
   if (songs.length === 0) {
@@ -81,15 +105,19 @@ export async function dumpLibrary(): Promise<DumpResult | DumpError> {
   fs.mkdirSync(DUMP_DIR, { recursive: true });
 
   // Download all staged files from GCS preserving folder structure
-  console.log('[dumpLibrary] Downloading files from GCS...');
+  console.log(`[dumpLibrary] Downloading ${songs.length} files from GCS in parallel...`);
   const downloadErrors: string[] = [];
+  let completed = 0;
 
-  await Promise.all(songs.map(async song => {
+  await Promise.all(songs.map(async (song, i) => {
+    const label = `[${i + 1}/${songs.length}] ${song.filename}`;
     const destPath = path.join(DUMP_DIR, song.folder, song.filename);
     try {
-      await downloadFromGCS(song.gcsKey, destPath);
+      await downloadFromGCS(song.gcsKey, destPath, label);
+      completed++;
+      console.log(`[dumpLibrary] Progress: ${completed}/${songs.length} downloads complete`);
     } catch (err: any) {
-      console.error(`[dumpLibrary] Failed to download ${song.gcsKey}:`, err.message);
+      console.error(`[dumpLibrary] ✗ Failed to download ${song.gcsKey}:`, err.message);
       downloadErrors.push(song.gcsKey);
     }
   }));
@@ -142,13 +170,14 @@ export async function dumpLibrary(): Promise<DumpResult | DumpError> {
   const zipKey = `dumps/crate_dump_${timestamp}.zip`;
   const bucket = getBucket();
 
-  console.log(`[dumpLibrary] Zip created — starting GCS upload to gs://dj-crate-stash/${zipKey}`);
+  console.log(`[dumpLibrary] Starting GCS upload → gs://dj-crate-stash/${zipKey}`);
+  const uploadT0 = Date.now();
   try {
     await bucket.upload(DUMP_ZIP, {
       destination: zipKey,
       metadata: { contentType: 'application/zip' },
     });
-    console.log(`[dumpLibrary] GCS upload complete — gs://dj-crate-stash/${zipKey}`);
+    console.log(`[dumpLibrary] GCS upload complete in ${((Date.now() - uploadT0) / 1000).toFixed(1)}s — gs://dj-crate-stash/${zipKey}`);
   } catch (err: any) {
     console.error('[dumpLibrary] Zip upload failed:', err.message);
     cleanup(DUMP_DIR, DUMP_ZIP);
@@ -203,7 +232,8 @@ export async function dumpLibrary(): Promise<DumpResult | DumpError> {
     console.log('[dumpLibrary] ✓ Cleanup complete');
   })();
 
-  console.log(`[dumpLibrary] ✓ Done — ${songCount} songs across ${folderSet.size} folders`);
+  const totalSec = ((Date.now() - dumpT0) / 1000).toFixed(1);
+  console.log(`[dumpLibrary] ✓ Done — ${songCount} songs across ${folderSet.size} folders in ${totalSec}s`);
   return {
     downloadUrl,
     downloadUrlExpiresAt: expiresAt.toISOString(),
